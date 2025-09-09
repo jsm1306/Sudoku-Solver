@@ -84,14 +84,10 @@ def find_sudoku_grid(image: np.ndarray) -> Optional[np.ndarray]:
         cv2.THRESH_BINARY_INV, 15, 4
     )
     
-    # Morphological operations to connect broken lines
     kernel = np.ones((3, 3), np.uint8)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    
-    # Find contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Filter contours by area and aspect ratio
     image_area = image.shape[0] * image.shape[1]
     min_area = image_area * 0.1  # At least 10% of image
     
@@ -101,13 +97,10 @@ def find_sudoku_grid(image: np.ndarray) -> Optional[np.ndarray]:
         if area < min_area:
             continue
             
-        # Approximate contour to polygon
         epsilon = 0.02 * cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, epsilon, True)
         
-        # Look for quadrilaterals (4 corners)
         if len(approx) == 4:
-            # Check if it's roughly square
             x, y, w, h = cv2.boundingRect(approx)
             aspect_ratio = max(w, h) / min(w, h)
             if aspect_ratio < 1.5:  # Reasonably square
@@ -116,7 +109,6 @@ def find_sudoku_grid(image: np.ndarray) -> Optional[np.ndarray]:
     if not grid_contours:
         return None
     
-    # Take the largest qualifying contour
     _, grid_corners = max(grid_contours, key=lambda x: x[0])
     return grid_corners.reshape(4, 2).astype(np.float32)
 
@@ -148,14 +140,11 @@ def process_image(image: np.ndarray) -> List[np.ndarray]:
     if len(image.shape) == 2:
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     
-    # Try to find the Sudoku grid
     grid_corners = find_sudoku_grid(image)
     
     if grid_corners is not None:
-        # Order the corners properly
         ordered_corners = order_corners(grid_corners)
         
-        # Define the target square (we'll use 450x450 for good resolution)
         target_size = 450
         target_corners = np.array([
             [0, 0],
@@ -405,117 +394,9 @@ def visualize_preprocessing_steps(cell: np.ndarray) -> dict:
     
     return steps
 
-# Usage example for debugging a specific cell:
-def debug_single_cell(cells: List[np.ndarray], cell_index: int, model) -> dict:
-    """
-    Debug a specific cell through the entire pipeline.
-    Returns detailed information about each step.
-    """
-    if cell_index >= len(cells):
-        return {"error": "Cell index out of range"}
-    
-    cell = cells[cell_index]
-    
-    # Get all preprocessing steps
-    steps = visualize_preprocessing_steps(cell)
-    
-    # Run recognition on this specific cell
-    single_cell_result = recognize_digits([cell], model)
-    
-    debug_info = {
-        "cell_index": cell_index,
-        "grid_position": (cell_index // 9, cell_index % 9),
-        "preprocessing_steps": steps,
-        "recognized_digit": single_cell_result[0, 0],
-        "cell_shape": cell.shape if cell.size > 0 else (0, 0)
-    }
-    
-    return debug_info
 
-# Helper function to visualize the detection process
-def visualize_grid_detection(image: np.ndarray) -> np.ndarray:
-    """
-    Visualize the grid detection process for debugging.
-    """
-    vis_image = image.copy()
-    
-    # Find and draw the detected grid
-    grid_corners = find_sudoku_grid(image)
-    
-    if grid_corners is not None:
-        # Draw the detected grid corners
-        ordered_corners = order_corners(grid_corners)
-        
-        # Draw the quadrilateral
-        cv2.drawContours(vis_image, [ordered_corners.astype(int)], -1, (0, 255, 0), 3)
-        
-        # Draw corner points
-        for i, corner in enumerate(ordered_corners):
-            cv2.circle(vis_image, tuple(corner.astype(int)), 8, (255, 0, 0), -1)
-            cv2.putText(vis_image, str(i), tuple(corner.astype(int)), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    
-    return vis_image
 
-def visualize_noise_reduction(cell: np.ndarray) -> dict:
-    """
-    Visualize the noise reduction steps for a single cell.
-    Returns a dictionary with intermediate processing steps.
-    """
-    steps = {}
-    
-    # Original
-    steps['original'] = cell.copy()
-    
-    # Convert to grayscale if needed
-    if len(cell.shape) == 3:
-        cell_gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
-    else:
-        cell_gray = cell.copy()
-    steps['grayscale'] = cell_gray
-    
-    # After bilateral filter
-    cell_bilateral = cv2.bilateralFilter(cell_gray, 9, 75, 75)
-    steps['bilateral_filtered'] = cell_bilateral
-    
-    # After Gaussian blur
-    cell_blurred = cv2.GaussianBlur(cell_bilateral, (3, 3), 0)
-    steps['gaussian_blurred'] = cell_blurred
-    
-    # After thresholding
-    cell_thresh = cv2.adaptiveThreshold(
-        cell_blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, 11, 2
-    )
-    steps['thresholded'] = cell_thresh
-    
-    # After opening (noise removal)
-    kernel_small = np.ones((2, 2), np.uint8)
-    cell_opened = cv2.morphologyEx(cell_thresh, cv2.MORPH_OPEN, kernel_small)
-    steps['opened'] = cell_opened
-    
-    # After connected components filtering
-    h, w = cell_thresh.shape
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-        cell_opened, connectivity=8
-    )
-    
-    cell_clean = np.zeros_like(cell_thresh)
-    min_component_size = max(3, (h * w) // 400)
-    
-    for label in range(1, num_labels):
-        component_size = stats[label, cv2.CC_STAT_AREA]
-        if component_size >= min_component_size:
-            cell_clean[labels == label] = 255
-    
-    steps['components_filtered'] = cell_clean
-    
-    # After closing
-    kernel_close = np.ones((2, 2), np.uint8)
-    cell_final = cv2.morphologyEx(cell_clean, cv2.MORPH_CLOSE, kernel_close)
-    steps['final'] = cell_final
-    
-    return steps
+
 
 # Add these new functions to your main.py file:
 
@@ -585,7 +466,6 @@ def auto_scan_sudoku(image: np.ndarray) -> Tuple[np.ndarray, bool, dict]:
     """
     debug_info = {}
     
-    # Preprocess image: resize for consistent processing
     max_dim = max(image.shape[:2])
     scale_factor = 600 / max_dim
     resized = cv2.resize(image, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
@@ -642,27 +522,482 @@ def visualize_auto_scan_steps(image: np.ndarray, debug_info: dict) -> dict:
         vis_images['enhanced'] = debug_info['enhanced']
     
     return vis_images
+def create_editable_sudoku_grid(matrix: np.ndarray) -> np.ndarray:
+    """
+    Create an editable Sudoku grid using Streamlit widgets.
+    Returns the updated matrix.
+    """
+    st.markdown("### ✏️ Editable Sudoku Grid")
+    st.markdown("*Click on any cell to edit the detected number. Use 0 or empty to clear a cell.*")
+
+
+
+    # Create a copy to avoid modifying the original
+    edited_matrix = matrix.copy()
+    
+    # Create the editable grid
+    cols = st.columns(9)
+    
+    for i in range(9):
+        # Add visual separation between 3x3 blocks
+        if i in [3, 6]:
+            st.markdown("---")
+        
+        with st.container():
+            row_cols = st.columns(9)
+            for j in range(9):
+                with row_cols[j]:
+                    # Create unique key for each cell
+                    cell_key = f"cell_{i}_{j}"
+                    
+                    # Get current value (convert 0 to empty string for display)
+                    current_value = matrix[i, j] if matrix[i, j] != 0 else ""
+                    
+                    # Create number input for each cell
+                    new_value = st.text_input(
+                        label="",  # No label to save space
+                        value=str(current_value) if current_value != "" else "",
+                        key=cell_key,
+                        max_chars=1,
+                        help=f"Row {i+1}, Column {j+1}",
+                        label_visibility="collapsed"
+                    )
+                    
+                    # Validate and update the matrix
+                    if new_value.strip() == "":
+                        edited_matrix[i, j] = 0
+                    elif new_value.isdigit() and 1 <= int(new_value) <= 9:
+                        edited_matrix[i, j] = int(new_value)
+                    elif new_value == "0":
+                        edited_matrix[i, j] = 0
+                    else:
+                        # Invalid input, keep original value
+                        edited_matrix[i, j] = matrix[i, j]
+                        if new_value.strip() != "":
+                            st.error(f"Invalid input: {new_value}. Use digits 1-9 or leave empty.")
+    
+    return edited_matrix
+
+def display_sudoku_comparison(original_matrix: np.ndarray, edited_matrix: np.ndarray):
+    """
+    Display a comparison between original detected matrix and user-edited matrix.
+    """
+    st.markdown("### 🔄 Changes Summary")
+    
+    changes = []
+    for i in range(9):
+        for j in range(9):
+            if original_matrix[i, j] != edited_matrix[i, j]:
+                # Convert to standard Python int to avoid PyArrow issues
+                old_val = int(original_matrix[i, j]) if original_matrix[i, j] != 0 else "empty"
+                new_val = int(edited_matrix[i, j]) if edited_matrix[i, j] != 0 else "empty"
+                changes.append({
+                    "Position": f"Row {i+1}, Column {j+1}",
+                    "Original": str(old_val),  # Convert to string
+                    "Modified": str(new_val)   # Convert to string
+                })
+    
+    if changes:
+        # Create DataFrame with explicit data types
+        df_changes = pd.DataFrame(changes)
+        # Ensure all columns are strings to avoid PyArrow conversion issues
+        df_changes = df_changes.astype(str)
+        
+        # Use st.table instead of st.dataframe for better compatibility
+        st.table(df_changes)
+        st.success(f"✅ {len(changes)} cells modified")
+    else:
+        st.info("ℹ️ No changes made to the detected board")
 def solve_with_hints(matrix: np.ndarray) -> dict:
     """
     Logic-based Sudoku solver that generates step-by-step hints.
     Returns a dict with hint details (e.g., cell, value, reason).
+    Implements naked singles technique: find cells with only one possible candidate.
     """
-    # TODO: Implement logic-based hint generation
-    pass
+    def get_candidates(r, c):
+        if matrix[r, c] != 0:
+            return []
+        candidates = set(range(1, 10))
+        # Remove digits in the same row
+        candidates -= set(matrix[r, :])
+        # Remove digits in the same column
+        candidates -= set(matrix[:, c])
+        # Remove digits in the same 3x3 block
+        br, bc = 3 * (r // 3), 3 * (c // 3)
+        candidates -= set(matrix[br:br+3, bc:bc+3].flatten())
+        return list(candidates)
+
+    for i in range(9):
+        for j in range(9):
+            if matrix[i, j] == 0:
+                candidates = get_candidates(i, j)
+                if len(candidates) == 1:
+                    value = candidates[0]
+                    reason = f"Naked single: only candidate for cell ({i+1},{j+1})"
+                    return {"row": i, "col": j, "value": value, "reason": reason}
+    # No naked singles found
+    return {}
 
 def overlay_hint_on_image(image: np.ndarray, hint: dict) -> np.ndarray:
     """
     Overlay hint (e.g., highlight cell, show reason) on the image using OpenCV.
     Returns the output image with overlays.
     """
-    # TODO: Draw overlays for hints/mistakes
-    pass
+    if not hint or 'row' not in hint or 'col' not in hint or 'value' not in hint:
+        return image
+
+    output = image.copy()
+    h, w = output.shape[:2]
+
+    # Calculate cell size assuming 9x9 grid and full image
+    cell_w = w // 9
+    cell_h = h // 9
+
+    r = hint['row']
+    c = hint['col']
+
+    # Calculate top-left and bottom-right corners of the cell
+    top_left = (c * cell_w, r * cell_h)
+    bottom_right = ((c + 1) * cell_w, (r + 1) * cell_h)
+
+    # Draw rectangle around the cell
+    cv2.rectangle(output, top_left, bottom_right, (0, 0, 255), 3)
+
+    # Put hint text above the rectangle
+    text = f"Hint: {hint['value']} ({hint.get('reason', '')})"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.7
+    thickness = 2
+    text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
+    text_x = top_left[0]
+    text_y = max(top_left[1] - 10, text_size[1] + 10)
+
+    # Draw background rectangle for text for better visibility
+    cv2.rectangle(output, (text_x, text_y - text_size[1] - 5), (text_x + text_size[0], text_y + 5), (0, 0, 0), -1)
+    # Put the text
+    cv2.putText(output, text, (text_x, text_y), font, font_scale, (0, 0, 255), thickness, cv2.LINE_AA)
+
+    return output
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Sudoku Tutor", layout="wide")
-st.title("Sudoku Tutor")
+st.set_page_config(
+    page_title="AI Sudoku Solver",
+    page_icon="🧠",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-uploaded_file = st.file_uploader("Upload a photo of a Sudoku puzzle", type=["jpg", "jpeg", "png"])
+# Custom CSS for professional styling
+st.markdown("""
+<style>
+    /* Professional color scheme */
+    :root {
+        --primary-color: #2563eb;
+        --secondary-color: #64748b;
+        --success-color: #059669;
+        --warning-color: #d97706;
+        --error-color: #dc2626;
+        --background-color: #f8fafc;
+        --card-background: #ffffff;
+        --text-primary: #1e293b;
+        --text-secondary: #64748b;
+        --border-color: #e2e8f0;
+    }
+
+    /* Global styling */
+    .main-header {
+        background: linear-gradient(135deg, var(--primary-color), #1d4ed8);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+        text-align: center;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .main-header h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+
+    .main-header p {
+        font-size: 1.1rem;
+        opacity: 0.9;
+        margin: 0;
+    }
+
+    /* Card styling */
+    .card {
+        background: var(--card-background);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+        border: 1px solid var(--border-color);
+    }
+
+    .card-header {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    /* Button styling */
+    .stButton button {
+        background: linear-gradient(135deg, var(--primary-color), #1d4ed8);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.75rem 1.5rem;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    }
+
+    .stButton button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.15);
+    }
+
+    /* File uploader styling */
+    .uploadedFile {
+        border: 2px dashed var(--primary-color);
+        border-radius: 8px;
+        padding: 2rem;
+        text-align: center;
+        background: rgba(37, 99, 235, 0.05);
+        margin: 1rem 0;
+    }
+
+    /* Sudoku table styling */
+    .sudoku-table {
+        border-collapse: collapse;
+        margin: 20px auto;
+        font-family: 'Inter', 'Segoe UI', sans-serif;
+        font-size: 20px;
+        font-weight: 600;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .sudoku-table td {
+        width: 50px;
+        height: 50px;
+        text-align: center;
+        vertical-align: middle;
+        border: 1px solid #cbd5e1;
+        background-color: #ffffff;
+        transition: all 0.2s ease;
+    }
+
+    .sudoku-table td:hover {
+        background-color: #f1f5f9;
+    }
+
+    .sudoku-table td.thick-right {
+        border-right: 3px solid var(--primary-color);
+    }
+
+    .sudoku-table td.thick-bottom {
+        border-bottom: 3px solid var(--primary-color);
+    }
+
+    .sudoku-table td.thick-top {
+        border-top: 3px solid var(--primary-color);
+    }
+
+    .sudoku-table td.thick-left {
+        border-left: 3px solid var(--primary-color);
+    }
+
+    .sudoku-table td.empty {
+        background-color: #f8fafc;
+        color: #94a3b8;
+        font-weight: 400;
+    }
+
+    /* Status messages */
+    .success-message {
+        background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+        border: 1px solid var(--success-color);
+        color: var(--success-color);
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+        font-weight: 500;
+    }
+
+    .info-message {
+        background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+        border: 1px solid var(--primary-color);
+        color: var(--primary-color);
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+        font-weight: 500;
+    }
+
+    .warning-message {
+        background: linear-gradient(135deg, #fef3c7, #fde68a);
+        border: 1px solid var(--warning-color);
+        color: var(--warning-color);
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+        font-weight: 500;
+    }
+
+    /* Progress indicators */
+    .progress-container {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin: 1rem 0;
+    }
+
+    .progress-step {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-weight: 500;
+        font-size: 0.9rem;
+    }
+
+    .progress-step.active {
+        background: var(--primary-color);
+        color: white;
+    }
+
+    .progress-step.completed {
+        background: var(--success-color);
+        color: white;
+    }
+
+    .progress-step.pending {
+        background: #e2e8f0;
+        color: var(--text-secondary);
+    }
+
+    /* Sidebar styling */
+    .sidebar-content {
+        padding: 1rem;
+    }
+
+    .sidebar-section {
+        background: var(--card-background);
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border: 1px solid var(--border-color);
+    }
+
+    .sidebar-section h4 {
+        color: var(--text-primary);
+        margin-bottom: 0.5rem;
+        font-size: 1rem;
+    }
+
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: #f1f5f9;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--primary-color);
+        border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: #1d4ed8;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.markdown('<div class="sidebar-content">', unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="sidebar-section">
+        <h4>🧠 About AI Sudoku Solver</h4>
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin: 0;">
+            Advanced AI-powered Sudoku solver that can detect puzzles from photos and provide intelligent hints.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="sidebar-section">
+        <h4>📋 Features</h4>
+        <ul style="color: var(--text-secondary); font-size: 0.9rem; margin: 0; padding-left: 1rem;">
+            <li>📸 Photo-based puzzle detection</li>
+            <li>🤖 AI digit recognition</li>
+            <li>✏️ Interactive editing</li>
+            <li>💡 Smart hints</li>
+            <li>🔄 Reset & clear options</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="sidebar-section">
+        <h4>🎯 How to Use</h4>
+        <ol style="color: var(--text-secondary); font-size: 0.9rem; margin: 0; padding-left: 1rem;">
+            <li>Upload a clear photo of a Sudoku puzzle</li>
+            <li>Review the AI-detected board</li>
+            <li>Edit any incorrect cells if needed</li>
+            <li>Use hints to solve step-by-step</li>
+        </ol>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Main content
+st.markdown("""
+<div class="main-header">
+    <h1>🧠 AI Sudoku Solver</h1>
+    <p>Upload a photo of your Sudoku puzzle and let AI solve it for you!</p>
+</div>
+""", unsafe_allow_html=True)
+
+# File upload section
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="card-header">📤 Upload Your Sudoku Puzzle</div>', unsafe_allow_html=True)
+
+uploaded_file = st.file_uploader(
+    "Choose a clear photo of your Sudoku puzzle",
+    type=["jpg", "jpeg", "png"],
+    help="Upload a high-quality image for best results"
+)
+
+if uploaded_file:
+    st.markdown('<div class="success-message">✅ File uploaded successfully! Processing...</div>', unsafe_allow_html=True)
+else:
+    st.markdown("""
+    <div class="info-message">
+        💡 <strong>Tip:</strong> Take a clear, well-lit photo of your Sudoku puzzle for best results.
+        Make sure all numbers are visible and the grid is not distorted.
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 if 'board_matrix' not in st.session_state:
     st.session_state['board_matrix'] = None
@@ -670,6 +1005,11 @@ if 'hint' not in st.session_state:
     st.session_state['hint'] = None
 if 'original_image' not in st.session_state:
     st.session_state['original_image'] = None
+if 'initial_matrix' not in st.session_state:
+    st.session_state['initial_matrix'] = None
+if 'original_matrix' not in st.session_state:
+    st.session_state['original_matrix'] = None
+
 
 # Replace the image processing section in your Streamlit code:
 
@@ -726,8 +1066,6 @@ if uploaded_file:
     with col4:
         st.image(final_cleaned, caption="6. Final (Eroded)", use_column_width=True, channels="GRAY")
 
-
-    # Auto-scan the Sudoku grid (Adobe Scan style)
     st.subheader("🔍 Auto-Scanning Sudoku Grid...")
     
     corrected_image, scan_success, debug_info = auto_scan_sudoku(image)
@@ -754,7 +1092,6 @@ if uploaded_file:
             if 'enhanced' in vis_images:
                 st.image(vis_images['enhanced'], caption="4. Enhanced Quality", use_column_width=True)
         
-        # Use the corrected image for digit recognition
         process_image_input = corrected_image
         
     else:
@@ -762,13 +1099,11 @@ if uploaded_file:
         st.write(f"Error: {debug_info.get('error', 'Unknown error')}")
         process_image_input = image
     
-    # Process the (corrected) image and recognize digits
     cells = process_image(process_image_input)
     matrix = recognize_digits(cells, model, confidence_threshold=0.6)
     st.session_state['board_matrix'] = matrix
     st.session_state['hint'] = None
 
-    # Display the 28x28 processed images (what actually goes to the CNN)
     if hasattr(recognize_digits, "processed_images"):
         st.subheader("28x28 Images Sent to CNN Model")
         cols = st.columns(9)
@@ -778,12 +1113,10 @@ if uploaded_file:
                 with cols[j]:
                     if idx < len(recognize_digits.processed_images):
                         img_28x28 = recognize_digits.processed_images[idx]
-                        # Normalize for display
                         display_img = (img_28x28 * 255).astype(np.uint8) if img_28x28.max() <= 1.0 else img_28x28
                         st.image(display_img, caption=f"({i+1},{j+1})", width=50, clamp=True)
-            st.write("")  # Add line break between rows
+            st.write("")  
 
-    # Display debug cell images in grid
     if hasattr(recognize_digits, "debug_images"):
         st.subheader("Cell Detection Results")
         for i in range(9):
@@ -796,27 +1129,30 @@ if uploaded_file:
                                caption=f"R{i+1}C{j+1}: {matrix[i,j]}", width=50)
 
     # Add debugging tools
-    st.subheader("🔧 Debugging Tools")
+    # st.subheader("🔧 Debugging Tools")
     
-    # Cell-by-cell debugging
+    # # Cell-by-cell debugging
     
     
-    # Confidence threshold adjustment
-    st.subheader("⚙️ Model Parameters")
-    new_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.6, 0.05)
+    # # Confidence threshold adjustment
+    # st.subheader("⚙️ Model Parameters")
+    # new_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.6, 0.05)
     
-    if st.button("Re-run Recognition with New Threshold"):
-        matrix = recognize_digits(cells, model, confidence_threshold=new_threshold)
-        st.session_state['board_matrix'] = matrix
-        st.rerun()
-    # Replace the debugging section and matrix display with this:
+    # if st.button("Re-run Recognition with New Threshold"):
+    #     matrix = recognize_digits(cells, model, confidence_threshold=new_threshold)
+    #     st.session_state['board_matrix'] = matrix
+    #     st.rerun()
+
 
     st.subheader("🎯 Detected Sudoku Board")
     if matrix is not None:
-        # Create a proper Sudoku grid display with 3x3 blocks
-        st.markdown("### Sudoku Grid")
+        if 'original_matrix' not in st.session_state:
+            st.session_state['original_matrix'] = matrix.copy()
+        if st.session_state['initial_matrix'] is None:
+            st.session_state['initial_matrix'] = matrix.copy()
         
-        # Create the Sudoku table with proper styling
+        st.markdown("### 🤖 AI Detected Board (Read-Only)")
+        
         html_table = """
         <style>
         .sudoku-table {
@@ -890,8 +1226,18 @@ if uploaded_file:
         # Display the HTML table
         st.markdown(html_table, unsafe_allow_html=True)
         
-        # Also show a simple text representation
-        st.markdown("### Text Representation")
+        # Create editable version
+        edited_matrix = create_editable_sudoku_grid(matrix)
+        
+        # Update session state with edited matrix
+        st.session_state['board_matrix'] = edited_matrix
+        
+        # Show comparison if there are changes
+        if st.session_state['original_matrix'] is not None:
+            display_sudoku_comparison(st.session_state['original_matrix'], edited_matrix)
+        
+        # Also show a simple text representation of current state
+        st.markdown("### 📝 Current Board State (Text)")
         text_repr = ""
         for i in range(9):
             if i in [3, 6]:
@@ -899,7 +1245,7 @@ if uploaded_file:
             for j in range(9):
                 if j in [3, 6]:
                     text_repr += "| "
-                cell_value = matrix[i, j]
+                cell_value = edited_matrix[i, j]
                 text_repr += str(cell_value) if cell_value != 0 else "."
                 text_repr += " "
             text_repr += "\n"
@@ -915,28 +1261,6 @@ if st.session_state['board_matrix'] is not None:
         st.session_state['hint'] = hint
         st.success(f"Hint: {hint if hint else 'No hint available.'}")
 
-    # TODO: Overlay hint on image and display
     if st.session_state['hint']:
         output_image = overlay_hint_on_image(st.session_state['original_image'], st.session_state['hint'])
         st.image(output_image, caption="Hint Overlay", use_column_width=True)
-   
-    
-
-# Add this helper function for better matrix display
-def display_sudoku_matrix(matrix: np.ndarray):
-    """Display sudoku matrix with nice formatting"""
-    if matrix is None:
-        return None
-        
-    # Convert 0s to empty strings for better display
-    display_matrix = matrix.copy().astype(str)
-    display_matrix[display_matrix == '0'] = ''
-    
-    # Create DataFrame with proper indices
-    df = pd.DataFrame(display_matrix, 
-                     index=[f'R{i+1}' for i in range(9)],
-                     columns=[f'C{j+1}' for j in range(9)])
-    
-    return df
-# TODO: Add support for re-uploading updated puzzle photos and comparing states
-# TODO: Highlight mistakes using overlays
