@@ -168,7 +168,6 @@ def process_image(image: np.ndarray) -> List[np.ndarray]:
         y_start = (h - side) // 2
         grid_image = image[y_start:y_start+side, x_start:x_start+side]
     
-    # Split into 81 cells with margin to avoid grid lines
     cell_size = side // 9
     margin = cell_size // 10  # 10% margin to avoid grid lines
     cells = []
@@ -978,7 +977,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # File upload section
-st.markdown('<div class="card">', unsafe_allow_html=True)
+# st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="card-header">📤 Upload Your Sudoku Puzzle</div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader(
@@ -997,6 +996,21 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
+# st.markdown('</div>', unsafe_allow_html=True)
+
+# Sudoku Rules Section
+# st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="card-header">📖 Sudoku Rules</div>', unsafe_allow_html=True)
+st.markdown("""
+<ul style="color: var(--text-secondary); font-size: 0.9rem; margin: 0; padding-left: 1rem;">
+    <li>Each row must contain digits 1-9 without repetition</li>
+    <li>Each column must contain digits 1-9 without repetition</li>
+    <li>Each 3×3 block must contain digits 1-9 without repetition</li>
+</ul>
+<p style="color: var(--text-secondary); font-size: 0.85rem; margin: 0.5rem 0 0 0; font-style: italic;">
+    Fill the grid so that every row, column, and 3×3 box contains all digits from 1 to 9.
+</p>
+""", unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 if 'board_matrix' not in st.session_state:
@@ -1054,10 +1068,9 @@ if uploaded_file:
     
     with col1:
         st.image(gray, caption="1. Original Grayscale", use_column_width=True, channels="GRAY")
-        st.image(denoised, caption="2. Median Filtered", use_column_width=True, channels="GRAY")
+        # st.image(denoised, caption="2. Median Filtered", use_column_width=True, channels="GRAY")
     
     with col2:
-        st.image(blurred, caption="3. Gaussian Blurred", use_column_width=True, channels="GRAY")
         st.image(thresholded_inverse, caption="4. Thresholded Inverse", use_column_width=True, channels="GRAY")
     
     with col3:
@@ -1079,11 +1092,6 @@ if uploaded_file:
         st.subheader("Auto-Scan Steps")
         col1, col2, col3 = st.columns(3)
         
-        with col1:
-            st.image(image, caption="1. Original Image", use_column_width=True)
-            if 'corners_detected' in vis_images:
-                st.image(vis_images['corners_detected'], caption="2. Detected Edges", use_column_width=True)
-        
         with col2:
             if 'perspective_corrected' in vis_images:
                 st.image(vis_images['perspective_corrected'], caption="3. Perspective Corrected", use_column_width=True)
@@ -1104,18 +1112,18 @@ if uploaded_file:
     st.session_state['board_matrix'] = matrix
     st.session_state['hint'] = None
 
-    if hasattr(recognize_digits, "processed_images"):
-        st.subheader("28x28 Images Sent to CNN Model")
-        cols = st.columns(9)
-        for i in range(9):
-            for j in range(9):
-                idx = i * 9 + j
-                with cols[j]:
-                    if idx < len(recognize_digits.processed_images):
-                        img_28x28 = recognize_digits.processed_images[idx]
-                        display_img = (img_28x28 * 255).astype(np.uint8) if img_28x28.max() <= 1.0 else img_28x28
-                        st.image(display_img, caption=f"({i+1},{j+1})", width=50, clamp=True)
-            st.write("")  
+    # if hasattr(recognize_digits, "processed_images"):
+    #     st.subheader("28x28 Images Sent to CNN Model")
+    #     cols = st.columns(9)
+    #     for i in range(9):
+    #         for j in range(9):
+    #             idx = i * 9 + j
+    #             with cols[j]:
+    #                 if idx < len(recognize_digits.processed_images):
+    #                     img_28x28 = recognize_digits.processed_images[idx]
+    #                     display_img = (img_28x28 * 255).astype(np.uint8) if img_28x28.max() <= 1.0 else img_28x28
+    #                     st.image(display_img, caption=f"({i+1},{j+1})", width=50, clamp=True)
+    #         st.write("")  
 
     if hasattr(recognize_digits, "debug_images"):
         st.subheader("Cell Detection Results")
