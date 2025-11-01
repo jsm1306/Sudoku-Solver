@@ -607,36 +607,555 @@ def display_sudoku_comparison(original_matrix: np.ndarray, edited_matrix: np.nda
         st.success(f"✅ {len(changes)} cells modified")
     else:
         st.info("ℹ️ No changes made to the detected board")
-def solve_with_hints(matrix: np.ndarray) -> dict:
-    """
-    Logic-based Sudoku solver that generates step-by-step hints.
-    Returns a dict with hint details (e.g., cell, value, reason).
-    Implements naked singles technique: find cells with only one possible candidate.
-    """
-    def get_candidates(r, c):
-        if matrix[r, c] != 0:
-            return []
-        candidates = set(range(1, 10))
-        # Remove digits in the same row
-        candidates -= set(matrix[r, :])
-        # Remove digits in the same column
-        candidates -= set(matrix[:, c])
-        # Remove digits in the same 3x3 block
-        br, bc = 3 * (r // 3), 3 * (c // 3)
-        candidates -= set(matrix[br:br+3, bc:bc+3].flatten())
-        return list(candidates)
 
+def get_candidates(matrix: np.ndarray, r: int, c: int) -> set:
+    """Get all possible candidates for a cell."""
+    if matrix[r, c] != 0:
+        return set()
+    
+    candidates = set(range(1, 10))
+    
+    # Remove digits in the same row
+    candidates -= set(matrix[r, :])
+    
+    # Remove digits in the same column
+    candidates -= set(matrix[:, c])
+    
+    # Remove digits in the same 3x3 block
+    br, bc = 3 * (r // 3), 3 * (c // 3)
+    candidates -= set(matrix[br:br+3, bc:bc+3].flatten())
+    
+    return candidates
+
+def find_pointing_pair(matrix: np.ndarray) -> Optional[dict]:
+    """Find candidates in a block that all lie in the same row/column."""
+    for block_row in range(3):
+        for block_col in range(3):
+            br, bc = block_row * 3, block_col * 3
+            
+            for digit in range(1, 10):
+                positions = []
+                for i in range(br, br+3):
+                    for j in range(bc, bc+3):
+                        if matrix[i, j] == 0 and digit in get_candidates(matrix, i, j):
+                            positions.append((i, j))
+                
+                if 2 <= len(positions) <= 3:
+                    # Check if all in same row
+                    rows = set(p[0] for p in positions)
+                    if len(rows) == 1:
+                        row = list(rows)[0]
+                        # Check if this eliminates candidates outside the block
+                        for j in range(9):
+                            if not (bc <= j < bc+3) and matrix[row, j] == 0:
+                                if digit in get_candidates(matrix, row, j):
+                                    return {
+                                        "row": positions[0][0],
+                                        "col": positions[0][1],
+                                        "value": None,
+                                        "technique": "Pointing Pair/Triple (Row)",
+                                        "reason": f"In block ({block_row+1},{block_col+1}), all {digit}s are in row {row+1}",
+                                        "explanation": f"Since {digit} in this block must be in row {row+1}, it can be eliminated from other cells in that row.",
+                                        "difficulty": "Medium"
+                                    }
+                    
+                    # Check if all in same column
+                    cols = set(p[1] for p in positions)
+                    if len(cols) == 1:
+                        col = list(cols)[0]
+                        for i in range(9):
+                            if not (br <= i < br+3) and matrix[i, col] == 0:
+                                if digit in get_candidates(matrix, i, col):
+                                    return {
+                                        "row": positions[0][0],
+                                        "col": positions[0][1],
+                                        "value": None,
+                                        "technique": "Pointing Pair/Triple (Column)",
+                                        "reason": f"In block ({block_row+1},{block_col+1}), all {digit}s are in column {col+1}",
+                                        "explanation": f"Since {digit} in this block must be in column {col+1}, it can be eliminated from other cells in that column.",
+                                        "difficulty": "Medium"
+                                    }
+    
+    return None
+def find_hidden_single(matrix: np.ndarray) -> Optional[dict]:
+    """Find a digit that can only go in one place in a row/column/block."""
+    # Check rows
+    for i in range(9):
+        for digit in range(1, 10):
+            if digit in matrix[i, :]:
+                continue
+            possible_cols = []
+            for j in range(9):
+                if matrix[i, j] == 0 and digit in get_candidates(matrix, i, j):
+                    possible_cols.append(j)
+            if len(possible_cols) == 1:
+                j = possible_cols[0]
+                return {
+                    "row": i,
+                    "col": j,
+                    "value": digit,
+                    "technique": "Hidden Single (Row)",
+                    "reason": f"In row {i+1}, {digit} can only go in column {j+1}",
+                    "explanation": f"Looking at row {i+1}, the digit {digit} has only one valid position at ({i+1},{j+1}).",
+                    "difficulty": "Easy"
+                }
+    
+    # Check columns
+    for j in range(9):
+        for digit in range(1, 10):
+            if digit in matrix[:, j]:
+                continue
+            possible_rows = []
+            for i in range(9):
+                if matrix[i, j] == 0 and digit in get_candidates(matrix, i, j):
+                    possible_rows.append(i)
+            if len(possible_rows) == 1:
+                i = possible_rows[0]
+                return {
+                    "row": i,
+                    "col": j,
+                    "value": digit,
+                    "technique": "Hidden Single (Column)",
+                    "reason": f"In column {j+1}, {digit} can only go in row {i+1}",
+                    "explanation": f"Looking at column {j+1}, the digit {digit} has only one valid position at ({i+1},{j+1}).",
+                    "difficulty": "Easy"
+                }
+    
+    # Check 3x3 blocks
+    for block_row in range(3):
+        for block_col in range(3):
+            br, bc = block_row * 3, block_col * 3
+            for digit in range(1, 10):
+                if digit in matrix[br:br+3, bc:bc+3]:
+                    continue
+                possible_cells = []
+                for i in range(br, br+3):
+                    for j in range(bc, bc+3):
+                        if matrix[i, j] == 0 and digit in get_candidates(matrix, i, j):
+                            possible_cells.append((i, j))
+                if len(possible_cells) == 1:
+                    i, j = possible_cells[0]
+                    return {
+                        "row": i,
+                        "col": j,
+                        "value": digit,
+                        "technique": "Hidden Single (Block)",
+                        "reason": f"In block ({block_row+1},{block_col+1}), {digit} can only go at ({i+1},{j+1})",
+                        "explanation": f"Within the 3×3 block, {digit} has only one valid position at ({i+1},{j+1}).",
+                        "difficulty": "Easy"
+                    }
+    
+    return None
+
+def find_naked_pair(matrix: np.ndarray) -> Optional[dict]:
+    """Find two cells in a row/column/block that share exactly 2 candidates."""
+    # Check rows
+    for i in range(9):
+        candidates_map = {}
+        for j in range(9):
+            if matrix[i, j] == 0:
+                cands = get_candidates(matrix, i, j)
+                if len(cands) == 2:
+                    cands_tuple = tuple(sorted(cands))
+                    if cands_tuple not in candidates_map:
+                        candidates_map[cands_tuple] = []
+                    candidates_map[cands_tuple].append(j)
+        
+        for cands_tuple, cols in candidates_map.items():
+            if len(cols) == 2:
+                # Found a naked pair - check if it eliminates candidates elsewhere
+                eliminated = False
+                for j in range(9):
+                    if j not in cols and matrix[i, j] == 0:
+                        cell_cands = get_candidates(matrix, i, j)
+                        if any(c in cell_cands for c in cands_tuple):
+                            eliminated = True
+                            break
+                
+                if eliminated:
+                    return {
+                        "row": i,
+                        "col": cols[0],
+                        "value": None,
+                        "technique": "Naked Pair (Row)",
+                        "reason": f"Cells ({i+1},{cols[0]+1}) and ({i+1},{cols[1]+1}) form a naked pair: {cands_tuple}",
+                        "explanation": f"These two cells in row {i+1} can only contain {cands_tuple}, eliminating these digits from other cells in the row.",
+                        "difficulty": "Medium"
+                    }
+    
+    return None
+def find_naked_single(matrix: np.ndarray) -> Optional[dict]:
+    """Find a cell with only one possible candidate."""
     for i in range(9):
         for j in range(9):
             if matrix[i, j] == 0:
-                candidates = get_candidates(i, j)
+                candidates = get_candidates(matrix, i, j)
                 if len(candidates) == 1:
-                    value = candidates[0]
-                    reason = f"Naked single: only candidate for cell ({i+1},{j+1})"
-                    return {"row": i, "col": j, "value": value, "reason": reason}
-    # No naked singles found
-    return {}
+                    value = list(candidates)[0]
+                    return {
+                        "row": i,
+                        "col": j,
+                        "value": value,
+                        "technique": "Naked Single",
+                        "reason": f"Cell ({i+1},{j+1}) can only be {value}",
+                        "explanation": f"After checking row {i+1}, column {j+1}, and its 3×3 block, only {value} is possible.",
+                        "difficulty": "Easy"
+                    }
+    return None
+def solve_with_hints(matrix: np.ndarray, hint_level: int = 2) -> dict:
+    """
+    Enhanced Sudoku solver with multiple techniques and hint levels.
+    
+    Args:
+        matrix: Current Sudoku board state
+        hint_level: 1 (Just location), 2 (Location + value), 3 (Full explanation)
+    
+    Returns:
+        Dictionary with hint details
+    """
+    # Try techniques in order of difficulty
+    techniques = [
+        find_naked_single,
+        find_hidden_single,
+        find_naked_pair,
+        find_pointing_pair
+    ]
+    
+    for technique_func in techniques:
+        hint = technique_func(matrix)
+        if hint:
+            # Adjust hint based on level
+            if hint_level == 1:
+                # Level 1: Just highlight the cell
+                return {
+                    "row": hint["row"],
+                    "col": hint["col"],
+                    "value": None,
+                    "technique": "Look at this cell!",
+                    "reason": f"Focus on cell ({hint['row']+1},{hint['col']+1})",
+                    "explanation": "Try to figure out what number goes here.",
+                    "difficulty": hint.get("difficulty", "Unknown")
+                }
+            elif hint_level == 2:
+                # Level 2: Show the digit
+                return hint
+            else:  # hint_level == 3
+                # Level 3: Full explanation with step-by-step reasoning
+                candidates = get_candidates(matrix, hint["row"], hint["col"])
+                
+                # Add detailed analysis
+                detailed_explanation = hint["explanation"] + "\n\n"
+                detailed_explanation += f"**Current candidates for ({hint['row']+1},{hint['col']+1}):** {sorted(candidates) if candidates else [hint['value']]}\n\n"
+                
+                # Show what eliminates other candidates
+                if hint["value"]:
+                    detailed_explanation += "**Why other digits are eliminated:**\n"
+                    for digit in range(1, 10):
+                        if digit != hint["value"]:
+                            if digit in matrix[hint["row"], :]:
+                                detailed_explanation += f"- {digit} is already in row {hint['row']+1}\n"
+                            elif digit in matrix[:, hint["col"]]:
+                                detailed_explanation += f"- {digit} is already in column {hint['col']+1}\n"
+                            else:
+                                br, bc = 3 * (hint["row"] // 3), 3 * (hint["col"] // 3)
+                                if digit in matrix[br:br+3, bc:bc+3]:
+                                    detailed_explanation += f"- {digit} is already in the 3×3 block\n"
+                
+                hint["explanation"] = detailed_explanation
+                return hint
+    
+    # No hints found
+    return {
+        "row": None,
+        "col": None,
+        "value": None,
+        "technique": "No hints available",
+        "reason": "The puzzle might be complete or requires advanced techniques",
+        "explanation": "Try reviewing your entries for mistakes, or the puzzle is solved!",
+        "difficulty": "Expert"
+    }
+def create_editable_sudoku_grid_with_validation(matrix: np.ndarray, initial_matrix: np.ndarray, 
+                                                  auto_check: bool = True) -> np.ndarray:
+    """
+    Create an editable Sudoku grid with real-time validation.
+    Uses form to prevent auto-rerun on every keystroke.
+    
+    Args:
+        matrix: Current board state (FROM SESSION STATE)
+        initial_matrix: Original clues (for reference only, all cells are editable)
+        auto_check: Enable/disable auto-validation
+    
+    Returns:
+        Updated matrix
+    """
+    st.markdown("### ✏️ Editable Sudoku Grid with Validation")
+    
+    if auto_check:
+        st.markdown("*✅ Auto-validation enabled: Valid moves in green, invalid in red*")
+    else:
+        st.markdown("*⏸️ Auto-validation disabled: Practice mode*")
+    
+    # Create a copy to work with - IMPORTANT: Use the matrix passed in (which should be from session state)
+    edited_matrix = matrix.copy()
+    
+    # Use a form to prevent auto-rerun
+    with st.form(key="sudoku_edit_form"):
+        # Create the editable grid
+        for i in range(9):
+            # Add visual separation between 3x3 blocks
+            if i in [3, 6]:
+                st.markdown("---")
+            
+            with st.container():
+                row_cols = st.columns(9)
+                for j in range(9):
+                    with row_cols[j]:
+                        # Create unique key for each cell
+                        cell_key = f"cell_{i}_{j}"
+                        
+                        # IMPORTANT FIX: Use matrix (from session state), not the original
+                        current_value = matrix[i, j] if matrix[i, j] != 0 else ""
+                        
+                        # Create text input
+                        new_value = st.text_input(
+                            label="",
+                            value=str(current_value) if current_value != "" else "",
+                            key=cell_key,
+                            max_chars=1,
+                            help=f"Row {i+1}, Column {j+1}",
+                            label_visibility="collapsed"
+                        )
+                        
+                        # Update the edited matrix based on input
+                        if new_value.strip() == "":
+                            edited_matrix[i, j] = 0
+                        elif new_value.isdigit() and 1 <= int(new_value) <= 9:
+                            edited_matrix[i, j] = int(new_value)
+                        elif new_value == "0":
+                            edited_matrix[i, j] = 0
+                        else:
+                            # Invalid input, keep current value
+                            edited_matrix[i, j] = matrix[i, j]
+        
+        # Form submit buttons
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            submitted = st.form_submit_button("💾 Save Changes", use_container_width=True, type="primary")
+        
+        with col2:
+            reset_clicked = st.form_submit_button("🔄 Reset to Original", use_container_width=True)
+        
+        with col3:
+            clear_clicked = st.form_submit_button("🧹 Clear All", use_container_width=True)
+    
+    # Handle form submissions OUTSIDE the form
+    if submitted:
+        # IMPORTANT: Save to session state
+        st.session_state['board_matrix'] = edited_matrix.copy()
+        st.success("💾 Changes saved successfully!")
 
+    if reset_clicked:
+        st.session_state['board_matrix'] = st.session_state['original_matrix'].copy()
+        # Clear the form session state to refresh the inputs
+        for i in range(9):
+            for j in range(9):
+                cell_key = f"cell_{i}_{j}"
+                if cell_key in st.session_state:
+                    del st.session_state[cell_key]
+        st.success("🔄 Board reset to original!")
+        st.rerun()
+
+    if clear_clicked:
+        st.session_state['board_matrix'] = np.zeros((9, 9), dtype=int)
+        # Clear the form session state to refresh the inputs
+        for i in range(9):
+            for j in range(9):
+                cell_key = f"cell_{i}_{j}"
+                if cell_key in st.session_state:
+                    del st.session_state[cell_key]
+        st.success("🧹 Board cleared!")
+        st.rerun()
+        
+        # Show validation AFTER form (outside form context)
+    if auto_check and submitted:
+        st.markdown("---")
+        board_validation = check_board_validity(edited_matrix)
+        
+        if board_validation["valid"]:
+            st.success(f"✅ No conflicts detected! The board is valid.", icon="✅")
+        else:
+            st.error(f"❌ Found {board_validation['total_conflicts']} conflict(s) on the board", icon="🚫")
+            
+            # Show conflict details in expander
+            with st.expander("🔍 View Conflict Details"):
+                for idx, conflict in enumerate(board_validation["conflicts"], 1):
+                    pos = conflict["position"]
+                    st.markdown(f"""
+                    **Conflict #{idx}:** Cell ({pos[0]+1},{pos[1]+1}) = {conflict['value']}
+                    """)
+                    for c in conflict["conflicts"]:
+                        st.markdown(f"- {c['message']}")
+        
+    return edited_matrix
+def validate_move(matrix: np.ndarray, row: int, col: int, value: int) -> dict:
+    """
+    Validate if placing a value at the given position violates Sudoku rules.
+    
+    Returns:
+        dict with validation result and details about conflicts
+    """
+    if value == 0:  # Empty cell is always valid
+        return {
+            "valid": True,
+            "conflicts": [],
+            "message": "Empty cell"
+        }
+    
+    conflicts = []
+    
+    # Check row conflict
+    row_values = matrix[row, :]
+    if value in row_values:
+        conflicting_cols = [c for c in range(9) if matrix[row, c] == value and c != col]
+        for c in conflicting_cols:
+            conflicts.append({
+                "type": "row",
+                "position": (row, c),
+                "message": f"Conflicts with row {row+1}, column {c+1}"
+            })
+    
+    # Check column conflict
+    col_values = matrix[:, col]
+    if value in col_values:
+        conflicting_rows = [r for r in range(9) if matrix[r, col] == value and r != row]
+        for r in conflicting_rows:
+            conflicts.append({
+                "type": "column",
+                "position": (r, col),
+                "message": f"Conflicts with row {r+1}, column {col+1}"
+            })
+    
+    # Check 3x3 block conflict
+    block_row, block_col = 3 * (row // 3), 3 * (col // 3)
+    block_values = matrix[block_row:block_row+3, block_col:block_col+3]
+    
+    for i in range(block_row, block_row+3):
+        for j in range(block_col, block_col+3):
+            if matrix[i, j] == value and (i, j) != (row, col):
+                conflicts.append({
+                    "type": "block",
+                    "position": (i, j),
+                    "message": f"Conflicts with row {i+1}, column {j+1} in the same 3×3 block"
+                })
+    
+    # Determine validity
+    is_valid = len(conflicts) == 0
+    
+    # Create summary message
+    if is_valid:
+        summary = f"✅ Valid: {value} can be placed at ({row+1},{col+1})"
+    else:
+        conflict_types = set(c["type"] for c in conflicts)
+        summary = f"❌ Invalid: {value} at ({row+1},{col+1}) conflicts with "
+        summary += ", ".join(conflict_types)
+    
+    return {
+        "valid": is_valid,
+        "conflicts": conflicts,
+        "message": summary
+    }
+
+def get_validation_color(is_valid: bool, is_initial: bool) -> str:
+    """
+    Get CSS color for cell based on validation state.
+    
+    Args:
+        is_valid: Whether the current value is valid
+        is_initial: Whether this is an original clue (not editable)
+    
+    Returns:
+        CSS background color string
+    """
+    if is_initial:
+        return "#e0e7ff"  # Light blue for initial clues
+    elif is_valid:
+        return "#dcfce7"  # Light green for valid moves
+    else:
+        return "#fee2e2"  # Light red for invalid moves
+
+def check_board_validity(matrix: np.ndarray) -> dict:
+    """
+    Check the entire board for any conflicts.
+    A conflict occurs when the SAME digit appears MORE THAN ONCE in a row/column/block.
+    
+    Returns:
+        dict with overall validity and list of all conflicts
+    """
+    all_conflicts = []
+    
+    for i in range(9):
+        for j in range(9):
+            if matrix[i, j] != 0:
+                value = matrix[i, j]
+                conflicts = []
+                
+                # Check row for DUPLICATES of this value
+                row_positions = [(i, c) for c in range(9) if matrix[i, c] == value]
+                if len(row_positions) > 1:
+                    # This value appears multiple times in the row - conflict!
+                    for pos in row_positions:
+                        if pos != (i, j):
+                            conflicts.append({
+                                "type": "row",
+                                "position": pos,
+                                "message": f"Duplicate {value} in row {i+1} at column {pos[1]+1}"
+                            })
+                
+                # Check column for DUPLICATES of this value
+                col_positions = [(r, j) for r in range(9) if matrix[r, j] == value]
+                if len(col_positions) > 1:
+                    # This value appears multiple times in the column - conflict!
+                    for pos in col_positions:
+                        if pos != (i, j):
+                            conflicts.append({
+                                "type": "column",
+                                "position": pos,
+                                "message": f"Duplicate {value} in column {j+1} at row {pos[0]+1}"
+                            })
+                
+                # Check 3x3 block for DUPLICATES of this value
+                block_row, block_col = 3 * (i // 3), 3 * (j // 3)
+                block_positions = []
+                for bi in range(block_row, block_row + 3):
+                    for bj in range(block_col, block_col + 3):
+                        if matrix[bi, bj] == value:
+                            block_positions.append((bi, bj))
+                
+                if len(block_positions) > 1:
+                    # This value appears multiple times in the block - conflict!
+                    for pos in block_positions:
+                        if pos != (i, j):
+                            conflicts.append({
+                                "type": "block",
+                                "position": pos,
+                                "message": f"Duplicate {value} in 3×3 block at ({pos[0]+1},{pos[1]+1})"
+                            })
+                
+                # If this cell has conflicts, add it to the list
+                if conflicts:
+                    all_conflicts.append({
+                        "position": (i, j),
+                        "value": value,
+                        "conflicts": conflicts
+                    })
+    
+    return {
+        "valid": len(all_conflicts) == 0,
+        "total_conflicts": len(all_conflicts),
+        "conflicts": all_conflicts
+    }
 def overlay_hint_on_image(image: np.ndarray, hint: dict) -> np.ndarray:
     """
     Overlay hint (e.g., highlight cell, show reason) on the image using OpenCV.
@@ -996,10 +1515,7 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
-# st.markdown('</div>', unsafe_allow_html=True)
 
-# Sudoku Rules Section
-# st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="card-header">📖 Sudoku Rules</div>', unsafe_allow_html=True)
 st.markdown("""
 <ul style="color: var(--text-secondary); font-size: 0.9rem; margin: 0; padding-left: 1rem;">
@@ -1112,18 +1628,7 @@ if uploaded_file:
     st.session_state['board_matrix'] = matrix
     st.session_state['hint'] = None
 
-    # if hasattr(recognize_digits, "processed_images"):
-    #     st.subheader("28x28 Images Sent to CNN Model")
-    #     cols = st.columns(9)
-    #     for i in range(9):
-    #         for j in range(9):
-    #             idx = i * 9 + j
-    #             with cols[j]:
-    #                 if idx < len(recognize_digits.processed_images):
-    #                     img_28x28 = recognize_digits.processed_images[idx]
-    #                     display_img = (img_28x28 * 255).astype(np.uint8) if img_28x28.max() <= 1.0 else img_28x28
-    #                     st.image(display_img, caption=f"({i+1},{j+1})", width=50, clamp=True)
-    #         st.write("")  
+
 
     if hasattr(recognize_digits, "debug_images"):
         st.subheader("Cell Detection Results")
@@ -1136,139 +1641,199 @@ if uploaded_file:
                         st.image(recognize_digits.debug_images[idx], 
                                caption=f"R{i+1}C{j+1}: {matrix[i,j]}", width=50)
 
-    # Add debugging tools
-    # st.subheader("🔧 Debugging Tools")
     
-    # # Cell-by-cell debugging
-    
-    
-    # # Confidence threshold adjustment
-    # st.subheader("⚙️ Model Parameters")
-    # new_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.6, 0.05)
-    
-    # if st.button("Re-run Recognition with New Threshold"):
-    #     matrix = recognize_digits(cells, model, confidence_threshold=new_threshold)
-    #     st.session_state['board_matrix'] = matrix
-    #     st.rerun()
-
-
-    st.subheader("🎯 Detected Sudoku Board")
-    if matrix is not None:
-        if 'original_matrix' not in st.session_state:
-            st.session_state['original_matrix'] = matrix.copy()
-        if st.session_state['initial_matrix'] is None:
-            st.session_state['initial_matrix'] = matrix.copy()
-        
-        st.markdown("### 🤖 AI Detected Board (Read-Only)")
-        
-        html_table = """
-        <style>
-        .sudoku-table {
-            border-collapse: collapse;
-            margin: 20px auto;
-            font-family: 'Courier New', monospace;
-            font-size: 18px;
-            font-weight: bold;
-        }
-        .sudoku-table td {
-            width: 40px;
-            height: 40px;
-            text-align: center;
-            vertical-align: middle;
-            border: 1px solid #666;
-            background-color: #f9f9f9;
-        }
-        .sudoku-table td.thick-right {
-            border-right: 3px solid #000;
-        }
-        .sudoku-table td.thick-bottom {
-            border-bottom: 3px solid #000;
-        }
-        .sudoku-table td.thick-top {
-            border-top: 3px solid #000;
-        }
-        .sudoku-table td.thick-left {
-            border-left: 3px solid #000;
-        }
-        .sudoku-table td.empty {
-            background-color: #fff;
-            color: #ccc;
-        }
-        </style>
-        <table class="sudoku-table">
-        """
-        
-        for i in range(9):
-            html_table += "<tr>"
-            for j in range(9):
-                # Determine cell classes for thick borders
-                classes = []
-                if j in [2, 5]:  # Right border of 3x3 blocks
-                    classes.append("thick-right")
-                if i in [2, 5]:  # Bottom border of 3x3 blocks  
-                    classes.append("thick-bottom")
-                if i == 0:  # Top border
-                    classes.append("thick-top")
-                if j == 0:  # Left border
-                    classes.append("thick-left")
-                if j == 8:  # Right border
-                    classes.append("thick-right")
-                if i == 8:  # Bottom border
-                    classes.append("thick-bottom")
-                
-                # Get cell value
-                cell_value = matrix[i, j]
-                if cell_value == 0:
-                    classes.append("empty")
-                    display_value = ""
-                else:
-                    display_value = str(cell_value)
-                
-                class_str = ' class="' + ' '.join(classes) + '"' if classes else ''
-                html_table += f'<td{class_str}>{display_value}</td>'
+        st.subheader("🎯 Detected Sudoku Board")
+        if matrix is not None:
+            # Initialize session state variables FIRST before using them
+            if 'original_matrix' not in st.session_state or st.session_state['original_matrix'] is None:
+                st.session_state['original_matrix'] = matrix.copy()
+            if 'initial_matrix' not in st.session_state or st.session_state['initial_matrix'] is None:
+                st.session_state['initial_matrix'] = matrix.copy()
             
-            html_table += "</tr>"
-        
-        html_table += "</table>"
-        
-        # Display the HTML table
-        st.markdown(html_table, unsafe_allow_html=True)
-        
-        # Create editable version
-        edited_matrix = create_editable_sudoku_grid(matrix)
-        
-        # Update session state with edited matrix
-        st.session_state['board_matrix'] = edited_matrix
-        
-        # Show comparison if there are changes
-        if st.session_state['original_matrix'] is not None:
-            display_sudoku_comparison(st.session_state['original_matrix'], edited_matrix)
-        
-        # Also show a simple text representation of current state
-        st.markdown("### 📝 Current Board State (Text)")
-        text_repr = ""
-        for i in range(9):
-            if i in [3, 6]:
-                text_repr += "------+-------+------\n"
-            for j in range(9):
-                if j in [3, 6]:
-                    text_repr += "| "
-                cell_value = edited_matrix[i, j]
-                text_repr += str(cell_value) if cell_value != 0 else "."
-                text_repr += " "
-            text_repr += "\n"
-        
-        st.code(text_repr, language=None)
-        
-    else:
-        st.error("❌ Board not detected. Please try with a clearer image.")
+            # IMPORTANT FIX: Always use board_matrix if it exists, otherwise initialize it
+            if 'board_matrix' not in st.session_state or st.session_state['board_matrix'] is None:
+                st.session_state['board_matrix'] = matrix.copy()
+            
+            # CRITICAL: Use board_matrix as source of truth for CURRENT state
+            # Don't use 'matrix' - that's the freshly detected one from image processing
+            current_matrix = st.session_state['board_matrix'].copy()
+            
+            st.markdown("### 🤖 AI Detected Board (Read-Only)")
+            
+            # Display ORIGINAL detected board (not current state)
+            html_table = """
+            <style>
+            .sudoku-table {
+                border-collapse: collapse;
+                margin: 20px auto;
+                font-family: 'Courier New', monospace;
+                font-size: 18px;
+                font-weight: bold;
+            }
+            .sudoku-table td {
+                width: 40px;
+                height: 40px;
+                text-align: center;
+                vertical-align: middle;
+                border: 1px solid #666;
+                background-color: #f9f9f9;
+            }
+            .sudoku-table td.thick-right {
+                border-right: 3px solid #000;
+            }
+            .sudoku-table td.thick-bottom {
+                border-bottom: 3px solid #000;
+            }
+            .sudoku-table td.thick-top {
+                border-top: 3px solid #000;
+            }
+            .sudoku-table td.thick-left {
+                border-left: 3px solid #000;
+            }
+            .sudoku-table td.empty {
+                background-color: #fff;
+                color: #ccc;
+            }
+            </style>
+            <table class="sudoku-table">
+            """
+            
+            for i in range(9):
+                html_table += "<tr>"
+                for j in range(9):
+                    classes = []
+                    if j in [2, 5]:
+                        classes.append("thick-right")
+                    if i in [2, 5]:
+                        classes.append("thick-bottom")
+                    if i == 0:
+                        classes.append("thick-top")
+                    if j == 0:
+                        classes.append("thick-left")
+                    if j == 8:
+                        classes.append("thick-right")
+                    if i == 8:
+                        classes.append("thick-bottom")
+                    
+                    # Show ORIGINAL detected matrix (read-only reference)
+                    cell_value = st.session_state['original_matrix'][i, j]
+                    if cell_value == 0:
+                        classes.append("empty")
+                        display_value = ""
+                    else:
+                        display_value = str(cell_value)
+                    
+                    class_str = ' class="' + ' '.join(classes) + '"' if classes else ''
+                    html_table += f'<td{class_str}>{display_value}</td>'
+                
+                html_table += "</tr>"
+            
+            html_table += "</table>"
+            st.markdown(html_table, unsafe_allow_html=True)
+            
+            auto_check = True
+            edited_matrix = create_editable_sudoku_grid_with_validation(
+                current_matrix,  # This is from st.session_state['board_matrix']
+                st.session_state['initial_matrix'],
+                auto_check=auto_check
+            )
+            
+            # Show comparison ONLY after "Save Changes" is clicked
+            if st.session_state.get('original_matrix') is not None and st.session_state.get('board_matrix') is not None:
+                if not np.array_equal(st.session_state['original_matrix'], st.session_state['board_matrix']):
+                    display_sudoku_comparison(st.session_state['original_matrix'], st.session_state['board_matrix'])
+            
+            # Text representation (use current board state from session)
+            st.markdown("### 📝 Current Board State (Text)")
+            text_repr = ""
+            for i in range(9):
+                if i in [3, 6]:
+                    text_repr += "------+-------+------\n"
+                for j in range(9):
+                    if j in [3, 6]:
+                        text_repr += "| "
+                    # Use board_matrix from session state
+                    cell_value = st.session_state['board_matrix'][i, j]
+                    text_repr += str(cell_value) if cell_value != 0 else "."
+                    text_repr += " "
+                text_repr += "\n"
+            
+            st.code(text_repr, language=None)
+            
+            st.markdown("---")
+            st.markdown("### ⚙️ Validation Settings")
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.info("💡 Use the checkboxes and buttons above to validate your board and get hints")
+            
+            with col2:
+                if st.button("🔍 Check Board", use_container_width=True):
+                    board_check = check_board_validity(st.session_state['board_matrix'])
+                    if board_check["valid"]:
+                        st.success("✅ All moves are valid!")
+                    else:
+                        st.error(f"❌ {board_check['total_conflicts']} conflicts found")
+                        # Show detailed conflicts
+                        with st.expander("View Conflict Details"):
+                            for idx, conflict in enumerate(board_check["conflicts"], 1):
+                                pos = conflict["position"]
+                                st.markdown(f"**Conflict #{idx}:** Cell ({pos[0]+1},{pos[1]+1}) = {conflict['value']}")
+                                for c in conflict["conflicts"]:
+                                    st.markdown(f"- {c['message']}")
+            
+        else:
+            st.error("❌ Board not detected. Please try with a clearer image.")
+            
 
 if st.session_state['board_matrix'] is not None:
-    if st.button("💡 Get Hint"):
-        hint = solve_with_hints(st.session_state['board_matrix'])
-        st.session_state['hint'] = hint
-        st.success(f"Hint: {hint if hint else 'No hint available.'}")
-
-    if st.session_state['hint']:
-        output_image = overlay_hint_on_image(st.session_state['original_image'], st.session_state['hint'])
-        st.image(output_image, caption="Hint Overlay", use_column_width=True)
+    st.markdown("### 💡 Smart Hint System")
+    
+    # Hint level selector
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🔍 Level 1: Just Location", use_container_width=True):
+            hint = solve_with_hints(st.session_state['board_matrix'], hint_level=1)
+            st.session_state['hint'] = hint
+            st.session_state['hint_level'] = 1
+    
+    with col2:
+        if st.button("💡 Level 2: Show Answer", use_container_width=True):
+            hint = solve_with_hints(st.session_state['board_matrix'], hint_level=2)
+            st.session_state['hint'] = hint
+            st.session_state['hint_level'] = 2
+    
+    with col3:
+        if st.button("📚 Level 3: Full Explanation", use_container_width=True):
+            hint = solve_with_hints(st.session_state['board_matrix'], hint_level=3)
+            st.session_state['hint'] = hint
+            st.session_state['hint_level'] = 3
+    
+    # Display hint information
+    if st.session_state.get('hint'):
+        hint = st.session_state['hint']
+        
+        if hint.get('row') is not None:
+            # Create hint display card
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                        padding: 1.5rem; border-radius: 12px; color: white; margin: 1rem 0;">
+                <h4 style="margin: 0 0 0.5rem 0;">🎯 {hint['technique']}</h4>
+                <p style="margin: 0.5rem 0; font-size: 1.1rem;"><strong>{hint['reason']}</strong></p>
+                <p style="margin: 0.5rem 0; opacity: 0.9;">{hint['explanation']}</p>
+                <div style="margin-top: 1rem; padding: 0.5rem; background: rgba(255,255,255,0.2); border-radius: 6px;">
+                    <strong>Difficulty:</strong> {hint.get('difficulty', 'Unknown')}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Visual overlay on image
+            if st.session_state.get('original_image') is not None:
+                output_image = overlay_hint_on_image(
+                    st.session_state['original_image'], 
+                    hint
+                )
+                st.image(output_image, caption="Hint Highlighted on Board", use_column_width=True)
+        else:
+            st.info(f"ℹ️ {hint['reason']}: {hint['explanation']}")
